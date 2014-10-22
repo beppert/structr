@@ -51,6 +51,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -76,6 +77,7 @@ import org.structr.common.error.SemanticErrorToken;
 import org.structr.common.geo.GeoCodingResult;
 import org.structr.common.geo.GeoHelper;
 import org.structr.core.GraphObject;
+import org.structr.core.GraphObjectMap;
 import org.structr.core.Services;
 import org.structr.core.app.App;
 import org.structr.core.app.Query;
@@ -88,6 +90,7 @@ import org.structr.core.graph.RelationshipInterface;
 import org.structr.core.property.ISO8601DateProperty;
 import org.structr.core.property.PropertyKey;
 import org.structr.core.property.PropertyMap;
+import org.structr.core.property.StringProperty;
 import org.structr.schema.ConfigurationProvider;
 import org.structr.schema.action.ActionContext;
 import org.structr.schema.action.Function;
@@ -119,6 +122,7 @@ public class Functions {
 	public static final String ERROR_MESSAGE_NUM                 = "Usage: ${num(string)}. Example: ${num(this.numericalStringValue)}";
 	public static final String ERROR_MESSAGE_INT                 = "Usage: ${int(string)}. Example: ${int(this.numericalStringValue)}";
 	public static final String ERROR_MESSAGE_RANDOM              = "Usage: ${random(num)}. Example: ${set(this, \"password\", random(8))}";
+	public static final String ERROR_MESSAGE_RINT                = "Usage: ${rint(range)}. Example: ${rint(1000)}";
 	public static final String ERROR_MESSAGE_INDEX_OF            = "Usage: ${index_of(string, word)}. Example: ${index_of(this.name, \"the\")}";
 	public static final String ERROR_MESSAGE_CONTAINS            = "Usage: ${contains(string, word)}. Example: ${contains(this.name, \"the\")}";
 	public static final String ERROR_MESSAGE_SUBSTRING           = "Usage: ${substring(string, start, length)}. Example: ${substring(this.name, 19, 3)}";
@@ -184,6 +188,7 @@ public class Functions {
 	public static final String ERROR_MESSAGE_FIND                = "Usage: ${find(type, key, value)}. Example: ${find(\"User\", \"email\", \"tester@test.com\"}";
 	public static final String ERROR_MESSAGE_CREATE              = "Usage: ${create(type, key, value)}. Example: ${create(\"Feedback\", \"text\", this.text)}";
 	public static final String ERROR_MESSAGE_DELETE              = "Usage: ${delete(entity)}. Example: ${delete(this)}";
+	public static final String ERROR_MESSAGE_CACHE               = "Usage: ${cache(key, timeout, valueExpression)}. Example: ${cache('value', 60, GET('http://rate-limited-URL.com'))}";
 
 	public static Function<Object, Object> get(final String name) {
 		return functions.get(name);
@@ -294,6 +299,9 @@ public class Functions {
 		}
 
 		switch (word) {
+
+			case "cache":
+				return new CacheExpression();
 
 			case "true":
 				return new ConstantExpression(true);
@@ -685,6 +693,29 @@ public class Functions {
 				return ERROR_MESSAGE_RANDOM;
 			}
 		});
+		functions.put("rint", new Function<Object, Object>() {
+
+			@Override
+			public Object apply(final ActionContext ctx, final GraphObject entity, final Object[] sources) throws FrameworkException {
+
+				if (arrayHasLengthAndAllElementsNotNull(sources, 1) && sources[0] instanceof Number) {
+
+					try {
+						return new Random(System.currentTimeMillis()).nextInt(((Number)sources[0]).intValue());
+
+					} catch (Throwable t) {
+						// ignore
+					}
+				}
+
+				return "";
+			}
+
+			@Override
+			public String usage() {
+				return ERROR_MESSAGE_RINT;
+			}
+		});
 		functions.put("index_of", new Function<Object, Object>() {
 
 			@Override
@@ -1072,7 +1103,7 @@ public class Functions {
 			public Object apply(final ActionContext ctx, final GraphObject entity, final Object[] sources) throws FrameworkException {
 
 				if (arrayHasLengthAndAllElementsNotNull(sources, 1)) {
-					return (sources[0] instanceof NodeInterface);
+					return (sources[0] instanceof GraphObject);
 				} else {
 					return false;
 				}
@@ -1812,36 +1843,36 @@ public class Functions {
 				final SecurityContext securityContext = entity.getSecurityContext();
 				if (arrayHasLengthAndAllElementsNotNull(sources, 2)) {
 
-					NodeInterface node = null;
+					GraphObject dataObject = null;
 
-					if (sources[0] instanceof NodeInterface) {
-						node = (NodeInterface)sources[0];
+					if (sources[0] instanceof GraphObject) {
+						dataObject = (GraphObject)sources[0];
 					}
 
 					if (sources[0] instanceof List) {
 
 						final List list = (List)sources[0];
-						if (list.size() == 1 && list.get(0) instanceof NodeInterface) {
+						if (list.size() == 1 && list.get(0) instanceof GraphObject) {
 
-							node = (NodeInterface)list.get(0);
+							dataObject = (GraphObject)list.get(0);
 						}
 					}
 
-					if (node != null) {
+					if (dataObject != null) {
 
 						final String keyName     = sources[1].toString();
-						final PropertyKey key    = StructrApp.getConfiguration().getPropertyKeyForJSONName(node.getClass(), keyName);
+						final PropertyKey key    = StructrApp.getConfiguration().getPropertyKeyForJSONName(dataObject.getClass(), keyName);
 
 						if (key != null) {
 
 							final PropertyConverter inputConverter = key.inputConverter(securityContext);
-							Object value = node.getProperty(key);
+							Object value = dataObject.getProperty(key);
 
 							if (inputConverter != null) {
 								return inputConverter.revert(value);
 							}
 
-							return node.getProperty(key);
+							return dataObject.getProperty(key);
 						}
 
 						return "";
@@ -2333,9 +2364,9 @@ public class Functions {
 
 				if (arrayHasMinLengthAndAllElementsNotNull(sources, 2)) {
 
-					if (sources[0] instanceof NodeInterface) {
+					if (sources[0] instanceof GraphObject) {
 
-						final NodeInterface source            = (NodeInterface)sources[0];
+						final GraphObject source              = (GraphObject)sources[0];
 						final Map<String, Object> properties  = new LinkedHashMap<>();
 						final SecurityContext securityContext = source.getSecurityContext();
 						final Gson gson                       = new GsonBuilder().create();
@@ -2958,6 +2989,34 @@ public class Functions {
 		result = result.replaceAll(" ", "-");
 
 		return result;
+
+	}
+
+	public static void recursivelyConvertMapToGraphObjectMap(final GraphObjectMap target, final Map<String, Object> source, final int depth) {
+
+		if (depth > 20) {
+			return;
+		}
+
+		for (final Map.Entry<String, Object> entry : source.entrySet()) {
+
+			final String key = entry.getKey();
+			final Object value = entry.getValue();
+
+			if (value instanceof Map) {
+
+				final Map<String, Object> map = (Map<String, Object>)value;
+				final GraphObjectMap obj      = new GraphObjectMap();
+
+				target.put(new StringProperty(key), obj);
+
+				recursivelyConvertMapToGraphObjectMap(obj, map, depth + 1);
+
+			} else {
+
+				target.put(new StringProperty(key), value);
+			}
+		}
 
 	}
 }
